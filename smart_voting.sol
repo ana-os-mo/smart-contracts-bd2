@@ -2,11 +2,11 @@
 pragma solidity ^0.5.0;
 
 contract Votacion {
-
+    //-----------------estructuras---------------------
     struct Voto{
         Propuesta propuesta;
         Opcion opcion;
-        uint platicaCambio; // dinero por cambio de opcion
+        uint platicaCambio;
     }
 
     struct Votante{
@@ -14,7 +14,12 @@ contract Votacion {
         bool votoEmitido;
     }
 
+    //-----------------enumeracion---------------------
+
     enum Propuesta {Propuesta0, Propuesta1}
+
+    enum Estado { Creada, Votando, Finalizada }
+	Estado public estado;
 
     enum Opcion {
         Altamente_de_acuerdo,
@@ -24,36 +29,46 @@ contract Votacion {
         Altamente_en_desacuerdo
     }
 
-    string public textProp1;
-    string public textProp2;
-    uint public numVotos = 0; //confirmar si acumula platicaCambio de opcion y especificar
-    uint private totalPlatica;
-    address private dirIniciador;
-    address payable public dirPresidente;
-    uint public numVotantesRegistrados = 0;
-    address payable public dirVicepresidente;
+    //-----------------mappings---------------------
     
     mapping(address => Voto) private votos;
     mapping(uint => uint) private numVotProp0;
     mapping(uint => uint) private numVotProp1;
     mapping(address => Votante) public registroVotantes;
-    
-    enum Estado { Creada, Votando, Finalizada }
-	Estado public estado;
 
-	constructor (
-        address payable _dirVicepresidente,
-        string memory _propuesta1,
-        string memory _propuesta2) public {
-            require(
-                msg.sender != _dirVicepresidente,
-                "No puede ocupar ambos cargos simultaneamente"
-            );
-            estado = Estado.Creada;
-            dirPresidente = msg.sender;
-            textProp1 = _propuesta1;
-            textProp2 = _propuesta2;
-            dirVicepresidente = _dirVicepresidente;                      
+    //-----------------otras variables---------------------
+
+    string public textProp1;
+    string public textProp2;
+    uint public numVotos = 0;
+    uint private totalPlatica;
+    address private dirIniciador;
+    address payable public dirPresidente;
+    uint public numVotantesRegistrados = 0;
+    address payable public dirVicepresidente;
+
+    //-----------------eventos---------------------
+
+    event votanteRegistrado(address Votante); //Verificar tipo
+    event votacionIniciada();
+    event votacionHecha(address Votante); //Verificar tipo
+    event votacionFinalizada(); 
+
+    // Quien crea la votacion queda con el rol de presidente
+    // y designa un vicepresidente
+	constructor (address payable _dirVicepresidente,string memory _textProp0,string memory _textProp1) public {
+        require(
+            // presi y vice no pueden ser iguales
+            msg.sender != _dirVicepresidente,
+            "No puede ocupar ambos cargos simultaneamente"
+        );
+        // la votacion queda en estado creada (0)
+        estado = Estado.Creada;
+        // creador de la votacion
+        dirPresidente = msg.sender;
+        textProp1 = _textProp0;
+        textProp2 = _textProp1;
+        dirVicepresidente = _dirVicepresidente;                      
     }
 
 	modifier soloOficiales() {
@@ -73,32 +88,33 @@ contract Votacion {
 	}
 
     modifier propuestaValida (uint _prop) {
-        require ((_prop == 0 || _prop == 1),
-        "La unicas propuestas disponibles son la 0 y la 1")
+        require (
+            _prop == 0 || _prop == 1,
+            "La unicas propuestas disponibles son la 0 y la 1"
+        );
         _;
     }
 
     modifier opcionValida (uint _op) {
         require ((_op >= 0 && _op <= 4),
-        "Solo opciones entre cero y cuatro")
+        "Solo opciones entre cero y cuatro"
+        );
         _;
     }
 
-    error valorIncorrecto(uint pagado, uint requerido);
-
-    event votanteRegistrado(address Votante); //Verificar tipo
-    event votacionIniciada();
-    event votacionHecha(address Votante); //Verificar tipo
-    
-    function registrarVotante(address _dirVotante, string memory _nombreVotante)
+    // registro de usuarios
+    function addVoter(address _dirVotante, string memory _nombreVotante)
         public
         estadoVotacion(Estado.Creada)
         soloOficiales
-    {
+    {   
+        // ni presi ni vice se pueden inscribir para votar
         require(
             (_dirVotante != dirPresidente) && (_dirVotante != dirVicepresidente),
             "El presidente y vicepresidente no pueden votar"
         );
+        // se registra al votante y se crea un objeto
+        // tipo voto para usar en el estado de votando
         Votante memory voto;
         voto.nombreVotante = _nombreVotante;
         voto.votoEmitido = false;
@@ -107,6 +123,8 @@ contract Votacion {
         emit votanteRegistrado(_dirVotante);
     }
 
+    // Inician las votaciones. Solo presi o vice
+    // Guarda registro del iniciador
     function iniciarVotacion()
         public
         estadoVotacion(Estado.Creada)
@@ -117,11 +135,11 @@ contract Votacion {
         emit votacionIniciada();
     }
 
+    // emision de votos. Solo votantes registrados
     function votar(Propuesta _propuesta, Opcion _opcion)
         public payable
         estadoVotacion(Estado.Votando)
-        propuestaValida (_propuesta)
-        opcionValida (_opcion)
+        // propuestaValida(_propuesta) opcionValida(_opcion)
         returns (bool votoEmitido)
     {
         bool found = false;
@@ -132,16 +150,12 @@ contract Votacion {
             if (registroVotantes[msg.sender].votoEmitido){
                 // trae el voto del votante
                 voto = votos[msg.sender];
-                // comprueba pago correcto para cambiar de opinion
-                if (msg.value != voto.platicaCambio * (1 ether))
-                    revert valorIncorrecto({
-                        pagado: msg.value,
-                        requerido: voto.platicaCambio * (1 ether)
-                    });
-                // require(
-                //     msg.value == voto.platicaCambio * (1 ether),
-                //     "Monto incorrecto para cambiar su opcion"
-                // );
+                // comprueba pago correcto por cambiar de opinion
+                require(
+                    msg.value == voto.platicaCambio * (1 ether),
+                    "Monto incorrecto para cambiar su opcion"
+                );
+                // comprueba que no cambie de propuesta
                 require(
                     _propuesta == voto.propuesta,
                     "Puede cambiar de opcion pero no de propuesta"
@@ -160,6 +174,10 @@ contract Votacion {
                     numVotProp1[uint(_opcion)]++;
                     voto.opcion = _opcion;
                 }
+
+                // Si elige la mismo opcion no se actualiza el voto
+                // pero igual se le cobra
+
                 // aumenta el precio para siguiente cambio
                 voto.platicaCambio ++;
                 // reemplaza voto completo con nuevos valores
@@ -188,13 +206,15 @@ contract Votacion {
                 } else {
                     numVotProp1[uint(_opcion)]++;
                 }
+                // si el usuario ya existe devuelve true
+                // de lo contrario false
+                found = true;
+                emit votacionHecha(msg.sender);
+                return found;
             }
-
-            // si el usuario ya existe devuelve true
-            // de lo contrario false
-            found = true;
+            
         }
-        emit votacionHecha(msg.sender);
+        // si usuario no registra retorna false sin dejar votar
         return found;
     }
     
@@ -204,18 +224,23 @@ contract Votacion {
         public
         estadoVotacion(Estado.Votando)
         soloOficiales
-    {
+    {   
+        // solo el que NO abrio la votacion puede cerrarla
         require(
             msg.sender != dirIniciador,
-            ""
+            "Solo el otro oficial autorizado puede cerrar la votacion"
         );
         estado = Estado.Finalizada;
+        // reparticion de ganancias por cambios de votacion 50/50
         dirVicepresidente.transfer(totalPlatica / 2);
         dirPresidente.transfer(totalPlatica / 2);
+        emit votacionFinalizada();
     }
 
-    function result(Propuesta _propuesta, Opcion _opcion)
-    public view estadoVotacion(Estado.Finalizada) returns (uint res){
+    function reporteFinal(Propuesta _propuesta, Opcion _opcion)
+    public view
+    estadoVotacion(Estado.Finalizada)
+    returns (uint res){
         if (_propuesta == Propuesta.Propuesta0) {
             return numVotProp0[uint(_opcion)];
         } else {
